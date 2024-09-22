@@ -8,5 +8,7 @@ if __name__ == '__main__':
     window.show()
     sys.exit(app.exec_())
 
-# TODO: Be able to pick multiple models and run at the same time on one graph, checkboxes for all models
+# TODO: add multiple models and run at the same time on one graph, checkboxes for all models
 # TODO: histogram of daily win/loss
+# TODO: change around placement of buttons
+# TODO: upload/download

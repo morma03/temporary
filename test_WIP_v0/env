@@ -1,0 +1,39 @@
+#############################################
+# Development
+#############################################
+
+# Environment
+LMA_PY_ENV_NAME="little_mari"
+LMA_VERSION="0.0.0"
+LMA_DEBUG_LEVEL="ADD_DEBUG_LEVEL_HERE"
+LMA_DEBUG=False
+
+# Database
+LMA_DATABASE_URL=postgres://user:password@localhost:5432/mydatabase
+
+# Data sources, API keys and Base URLs
+LMA_ALPHA_VANTAGE_NAME="ALPHA_VANTAGE"
+LMA_ALPHA_VANTAGE_API_KEY="SVOC0F6WP7CKWEAH"
+LMA_ALPHA_VANTAGE_BASE_URL="https://www.alphavantage.co"
+
+LMA_BLOOMBERG_NAME="BLOOMBERG"
+LMA_BLOOMBERG_BASE_URL="https://www.bloomberg.com"
+LMA_BLOOMBERG_API_KEY="ADD_API_KEY_HERE"
+
+LMA_QUANDL_NAME="QUANDL"
+LMA_QUANDL_BASE_URL="https://www.quandl.com"
+LMA_QUANDL_API_KEY="ADD_API_KEY_HERE"
+
+# Directories
+LMA_PROJECT_DIR_BASE='YOUR_PROJECT_DIR'
+LMA_DATA_DIR_RELATIVE_LIVE_SOURCE_DATA='/data_live'
+
+# Historical FX source used in system
+LMA_HISTORICAL_FX_CLOSE_SOURCE=${LMA_ALPHA_VANTAGE_NAME}
+LMA_HISTORICAL_FX_CLOSE_SOURCE_DATA_BASE_URL=${LMA_ALPHA_VANTAGE_BASE_URL}
+LMA_HISTORICAL_FX_CLOSE_SOURCE_DATA_API_KEY=${LMA_ALPHA_VANTAGE_API_KEY}
+
+#############################################
+# Production
+#############################################
+# TODO: ...

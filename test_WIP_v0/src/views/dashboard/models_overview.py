@@ -7,11 +7,8 @@ from datetime import datetime
 from PyQt5 import QtWidgets, QtCore, QtGui
 from PyQt5.QtWebEngineWidgets import QWebEngineView
 from PyQt5.QtWidgets import QCompleter
-from bokeh.plotting import figure
-from bokeh.models import ColumnDataSource, HoverTool, DataTable, TableColumn, DatetimeTickFormatter
-from bokeh.resources import CDN
-from bokeh.embed import file_html
-from bokeh.layouts import column, row
+import matplotlib.pyplot as plt
+from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 
 from src.utils._config import env_vars
 from src.utils._util import read_local_csv, format_underscore_str
@@ -19,9 +16,13 @@ from src.views.inputs.dynamic_data import get_dynamic_currency_list
 from src.data.alphavantage import alphavantage_get_fx_daily_data, alphavantage_get_currency_list
 
 from src.views.chart.price import plot_price_with_bollinger_model
-from src.views.chart.daily_pnl import plot_daily_pnl, calculate_daily_pnl
-from src.views.chart.cumulative_returns import plot_cumulative_returns, calculate_cumulative_returns
+from src.views.chart.daily_pnl import calculate_daily_pnl, plot_daily_pnl
+from src.views.chart.cumulative_returns import  calculate_cumulative_returns, plot_cumulative_returns
 from src.trading_models.model_moving_average import model_moving_average
+
+import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
+from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 
 default_inputs = {
     'cash': 10000,
@@ -64,7 +65,7 @@ def transform_model_output(model_output, initial_cash=10000):
 class Worker(QtCore.QObject):
     finished = QtCore.pyqtSignal()
     error = QtCore.pyqtSignal(str)
-    result = QtCore.pyqtSignal(str, pd.DataFrame)
+    result = QtCore.pyqtSignal(pd.DataFrame, pd.DataFrame, pd.DataFrame)
 
     def __init__(self, inputs, env_vars, selected_files, selected_models, uploaded_data=None):
         super().__init__()
@@ -89,64 +90,23 @@ class Worker(QtCore.QObject):
                 )
                 ohlc_values = read_local_csv(ohlc_file_path)
 
-        
-            for file_name in self.selected_files:
-                file_path = os.path.join('./data', file_name)
-                file_data = pd.read_csv(file_path)
-            
-
             ohlc_values['timestamp'] = pd.to_datetime(ohlc_values['timestamp'])
             mask = (ohlc_values['timestamp'] >= self.inputs['start_date']) & (ohlc_values['timestamp'] <= self.inputs['end_date'])
             ohlc_values = ohlc_values.loc[mask]
 
-        
-        
             if 'Moving Average Model' in self.selected_models:
                 model_output = model_moving_average(ohlc_values)
             else:
-            
-                model_output = ohlc_values 
+                model_output = ohlc_values
 
             data, trades = transform_model_output(model_output, initial_cash=self.inputs['cash'])
             data['close'] = ohlc_values['close'].values
             stats = calculate_stats(data, trades, initial_cash=self.inputs['cash'])
             model_output, trades = calculate_daily_pnl(model_output)
             model_output = calculate_cumulative_returns(model_output)
-            model_output.to_csv('./model_output.csv')
-
-            number_of_trades = len(trades)
-            winning_trades = len([t for t in trades if t > 0])
-            losing_trades = len([t for t in trades if t <= 0])
-            win_rate = winning_trades / number_of_trades if number_of_trades > 0 else 0
-            total_return = model_output['cumulative_return'].iloc[-1]
-
-            stats = {
-                'Total Return': f"{total_return:.2%}",
-                'Number of Trades': number_of_trades,
-                'Winning Trades': winning_trades,
-                'Losing Trades': losing_trades,
-                'Win Rate': f"{win_rate:.2%}" if number_of_trades > 0 else 'N/A',
-            }
-
-            stats_df = pd.DataFrame(list(stats.items()), columns=['Metric', 'Value'])
-            columns = [TableColumn(field="Metric", title="Metric"),
-                       TableColumn(field="Value", title="Value")]
-            data_table = DataTable(source=ColumnDataSource(stats_df), columns=columns, width=800, height=280)
-
-            price_plot = plot_price_with_bollinger_model(model_output)
-            daily_returns_plot = plot_daily_pnl(model_output)
-            cumulative_returns_plot = plot_cumulative_returns(model_output)
-
-        
-            layout = column(
-                price_plot,
-                daily_returns_plot,
-                cumulative_returns_plot,
-                data_table
-            )
-
-            html = file_html(layout, CDN, format_underscore_str(f"{self.env_vars['LMA_PY_ENV_NAME']} {self.env_vars['LMA_VERSION']}"))
-            self.result.emit(html, model_output)
+            model_output.to_csv(os.path.join(env_vars['LMA_PROJECT_DIR_BASE'], 'model_output.csv'))
+            
+            self.result.emit(model_output, data, ohlc_values)
 
         except Exception as e:
             self.error.emit(str(e))
@@ -156,7 +116,7 @@ class Worker(QtCore.QObject):
 class MainModelsOverviewWindow(QtWidgets.QWidget):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle(format_underscore_str(f"{env_vars['LMA_PY_ENV_NAME']} {env_vars['LMA_VERSION']}"))
+        self.setWindowTitle(format_underscore_str(f"{env_vars['LMA_PY_ENV_NAME']} v{env_vars['LMA_VERSION']}"))
 
         currency_list_file_path = get_dynamic_currency_list()
 
@@ -167,27 +127,21 @@ class MainModelsOverviewWindow(QtWidgets.QWidget):
             QtWidgets.QMessageBox.critical(self, 'Error', 'Failed to fetch currency list.')
             currency_codes = []
 
-    
         self.layout = QtWidgets.QHBoxLayout()
 
-    
-        charts_layout = QtWidgets.QVBoxLayout()
-        self.web_view = QWebEngineView()
-        self.loading_label = QtWidgets.QLabel('Loading, please wait...')
-        self.loading_label.setAlignment(QtCore.Qt.AlignCenter)
-        self.loading_label.setVisible(False)
+        self.charts_layout = QtWidgets.QVBoxLayout()
+        self.canvas_widgets = []
 
-        charts_layout.addWidget(self.loading_label)
-        charts_layout.addWidget(self.web_view)
-
-    
         side_panel_layout = QtWidgets.QVBoxLayout()
+        
+        submit_group = QtWidgets.QGroupBox('Submit')
+        submit_layout = QtWidgets.QFormLayout()
 
-    
         inputs_group = QtWidgets.QGroupBox('Inputs')
         inputs_layout = QtWidgets.QFormLayout()
 
         self.cash_input = QtWidgets.QLineEdit(str(default_inputs['cash']))
+
 
         self.from_symbol_input = QtWidgets.QComboBox()
         self.to_symbol_input = QtWidgets.QComboBox()
@@ -220,24 +174,25 @@ class MainModelsOverviewWindow(QtWidgets.QWidget):
         self.start_date_input = QtWidgets.QLineEdit(default_inputs['start_date'])
         self.end_date_input = QtWidgets.QLineEdit(default_inputs['end_date'])
 
+        self.fetch_button = QtWidgets.QPushButton('Fetch Data and Analyze')
+        self.fetch_button.clicked.connect(self.run_analysis)
+
+        submit_layout.addRow(self.fetch_button)
+        
         inputs_layout.addRow('Cash:', self.cash_input)
         inputs_layout.addRow('From Symbol:', self.from_symbol_input)
         inputs_layout.addRow('To Symbol:', self.to_symbol_input)
         inputs_layout.addRow('Start Date (YYYY-MM-DD):', self.start_date_input)
         inputs_layout.addRow('End Date (YYYY-MM-DD):', self.end_date_input)
 
-        self.fetch_button = QtWidgets.QPushButton('Fetch Data and Analyze')
-        self.fetch_button.clicked.connect(self.run_analysis)
 
-        inputs_layout.addRow(self.fetch_button)
-
+        submit_group.setLayout(submit_layout)
         inputs_group.setLayout(inputs_layout)
 
-    
         files_group = QtWidgets.QGroupBox('Available Files')
         files_layout = QtWidgets.QVBoxLayout()
 
-        file_dir = './data' 
+        file_dir = os.path.join(env_vars['LMA_PROJECT_DIR_BASE'], 'data')
         if os.path.exists(file_dir):
             file_paths = [os.path.join(file_dir, f) for f in os.listdir(file_dir) if os.path.isfile(os.path.join(file_dir, f))]
             file_names = [os.path.basename(f) for f in file_paths]
@@ -251,7 +206,6 @@ class MainModelsOverviewWindow(QtWidgets.QWidget):
 
         files_group.setLayout(files_layout)
 
-    
         models_group = QtWidgets.QGroupBox('Trading Models')
         models_layout = QtWidgets.QVBoxLayout()
         self.model_checkboxes = []
@@ -262,7 +216,6 @@ class MainModelsOverviewWindow(QtWidgets.QWidget):
 
         models_group.setLayout(models_layout)
 
-    
         upload_download_group = QtWidgets.QGroupBox('Upload/Download')
         upload_download_layout = QtWidgets.QVBoxLayout()
         self.upload_button = QtWidgets.QPushButton('Upload CSV File')
@@ -274,19 +227,17 @@ class MainModelsOverviewWindow(QtWidgets.QWidget):
 
         upload_download_group.setLayout(upload_download_layout)
 
-    
+        side_panel_layout.addWidget(submit_group)
         side_panel_layout.addWidget(inputs_group)
         side_panel_layout.addWidget(files_group)
         side_panel_layout.addWidget(models_group)
         side_panel_layout.addWidget(upload_download_group)
 
-    
         side_panel_layout.addStretch()
 
-    
-        self.layout.addLayout(charts_layout, stretch=4)
-        self.layout.addLayout(side_panel_layout, stretch=1)
 
+        self.layout.addLayout(self.charts_layout, stretch=4)
+        self.layout.addLayout(side_panel_layout, stretch=1)
         self.setLayout(self.layout)
 
     def upload_csv_file(self):
@@ -302,7 +253,7 @@ class MainModelsOverviewWindow(QtWidgets.QWidget):
                 QtWidgets.QMessageBox.critical(self, 'Error', f'Failed to upload file: {str(e)}')
 
     def download_dashboard_data(self):
-        if not hasattr(self, 'current_html') or not hasattr(self, 'model_output'):
+        if not hasattr(self, 'model_output'):
             QtWidgets.QMessageBox.warning(self, 'Warning', 'No dashboard or data to download. Please run analysis first.')
             return
         options = QtWidgets.QFileDialog.Options()
@@ -310,9 +261,6 @@ class MainModelsOverviewWindow(QtWidgets.QWidget):
         directory = QtWidgets.QFileDialog.getExistingDirectory(self, "Select Directory to Save Files", options=options)
         if directory:
             try:
-                dashboard_file = os.path.join(directory, 'dashboard.html')
-                with open(dashboard_file, 'w') as f:
-                    f.write(self.current_html)
                 data_file = os.path.join(directory, 'model_output.csv')
                 self.model_output.to_csv(data_file, index=False)
                 QtWidgets.QMessageBox.information(self, 'Success', f'Dashboard and data saved successfully in {directory}.')
@@ -340,9 +288,6 @@ class MainModelsOverviewWindow(QtWidgets.QWidget):
             QtWidgets.QMessageBox.warning(self, 'Warning', 'Please select at least one trading model.')
             return
 
-        self.loading_label.setVisible(True)
-        self.fetch_button.setEnabled(False)
-
         self.thread = QtCore.QThread()
         self.worker = Worker(inputs, env_vars, selected_files, selected_models, uploaded_data)
         self.worker.moveToThread(self.thread)
@@ -352,14 +297,29 @@ class MainModelsOverviewWindow(QtWidgets.QWidget):
         self.thread.finished.connect(self.thread.deleteLater)
         self.worker.result.connect(self.display_result)
         self.worker.error.connect(self.display_error)
-        self.thread.finished.connect(lambda: self.loading_label.setVisible(False))
-        self.thread.finished.connect(lambda: self.fetch_button.setEnabled(True))
         self.thread.start()
 
-    def display_result(self, html, model_output):
-        self.web_view.setHtml(html)
-        self.current_html = html
-        self.model_output = model_output
+    def display_result(self, model_output, data, ohlc_values):
+        self.clear_charts()
+
+        price_fig = plot_price_with_bollinger_model(model_output)
+        daily_returns_fig = plot_daily_pnl(model_output)
+        cumulative_returns_fig = plot_cumulative_returns(model_output)
+
+        self.add_plot_to_layout(price_fig)
+        self.add_plot_to_layout(daily_returns_fig)
+        self.add_plot_to_layout(cumulative_returns_fig)
+
+    def add_plot_to_layout(self, fig):
+        canvas = FigureCanvas(fig)
+        self.charts_layout.addWidget(canvas)
+        self.canvas_widgets.append(canvas)
+
+    def clear_charts(self):
+        for canvas in self.canvas_widgets:
+            self.charts_layout.removeWidget(canvas)
+            canvas.deleteLater()
+        self.canvas_widgets = []
 
     def display_error(self, error_msg):
         QtWidgets.QMessageBox.critical(self, 'Error', error_msg)
